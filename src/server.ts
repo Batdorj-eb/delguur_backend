@@ -96,7 +96,7 @@ const corsOptions: cors.CorsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
+// Express 5 + path-to-regexp: `app.options('*', …)` нь PathError өгдөг; `cors()` middleware OPTIONS-ийг аль хэдийн боловсруулна.
 
 // ── Security & logging ────────────────────────────────────────────────
 app.use(

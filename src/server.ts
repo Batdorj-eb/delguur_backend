@@ -7,7 +7,7 @@ import path from 'path';
 import routes from './routes';
 import { errorHandler, notFound } from './middleware/errorHandler';
 
-dotenv.config();
+dotenv.config({ path: path.join(process.cwd(), '.env') });
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -15,6 +15,88 @@ const PORT = process.env.PORT || 5000;
 if (process.env.NODE_ENV === 'production' || process.env.TRUST_PROXY === '1') {
   app.set('trust proxy', 1);
 }
+
+/** Браузерын `Origin` header-тай ижил формат (ж: төгсгөлийн `/` байхгүй). */
+function canonicalOrigin(raw: string): string | null {
+  const t = raw.trim();
+  if (!t) return null;
+  try {
+    return new URL(t).origin;
+  } catch {
+    return null;
+  }
+}
+
+function addOrigin(set: Set<string>, raw: string): void {
+  const c = canonicalOrigin(raw);
+  if (c) set.add(c);
+}
+
+// ── CORS (helmet-ээс өмнө — OPTIONS / preflight-д саад багасгана) ─────────
+function buildAllowedOrigins(): Set<string> {
+  const out = new Set<string>();
+
+  for (const d of [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3001',
+  ]) {
+    addOrigin(out, d);
+  }
+
+  for (const raw of process.env.CLIENT_URLS?.split(',') ?? []) {
+    addOrigin(out, raw);
+  }
+
+  const client = process.env.CLIENT_URL?.trim();
+  if (client) {
+    addOrigin(out, client);
+    try {
+      const url = new URL(client);
+      const host = url.hostname;
+      const port = url.port ? `:${url.port}` : '';
+      if (host.startsWith('www.')) {
+        addOrigin(out, `${url.protocol}//${host.slice(4)}${port}`);
+      } else {
+        addOrigin(out, `${url.protocol}//www.${host}${port}`);
+      }
+    } catch {
+      /* буруу URL */
+    }
+  }
+
+  if (process.env.NODE_ENV === 'production' && out.size <= 4 && !client) {
+    console.warn(
+      '[CORS] CLIENT_URL тохируулаагүй байна — .env болон PM2 cwd шалгана уу (frontend origin хориглогдоно).'
+    );
+  }
+
+  return out;
+}
+
+const allowedOrigins = buildAllowedOrigins();
+
+const corsOptions: cors.CorsOptions = {
+  origin(origin, callback) {
+    const o = origin ? canonicalOrigin(origin) : null;
+    if (!o || allowedOrigins.has(o)) {
+      callback(null, true);
+    } else {
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn(`[CORS] blocked origin: ${origin} (allowed: ${[...allowedOrigins].join(', ')})`);
+      }
+      callback(null, false);
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'x-session-id'],
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // ── Security & logging ────────────────────────────────────────────────
 app.use(
@@ -24,60 +106,9 @@ app.use(
 );
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
-// ── CORS ──────────────────────────────────────────────────────────────
-function buildAllowedOrigins(): string[] {
-  const out = new Set<string>([
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'http://localhost:3001',
-    'http://127.0.0.1:3001',
-  ]);
-
-  const extra = process.env.CLIENT_URLS?.split(',') ?? [];
-  for (const raw of extra) {
-    const t = raw.trim();
-    if (t) out.add(t);
-  }
-
-  const client = process.env.CLIENT_URL?.trim();
-  if (client) {
-    out.add(client);
-    try {
-      const url = new URL(client);
-      const host = url.hostname;
-      if (host.startsWith('www.')) {
-        out.add(`${url.protocol}//${host.slice(4)}`);
-      } else {
-        out.add(`${url.protocol}//www.${host}`);
-      }
-    } catch {
-      /* CLIENT_URL буруу URL бол зөвхөн түүнийг л үлдээнэ */
-    }
-  }
-
-  return [...out];
-}
-
-const allowedOrigins = buildAllowedOrigins();
-
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(null, false);
-      }
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-session-id'],
-  })
-);
-
 // ── Body parsing ──────────────────────────────────────────────────────
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 // ── Static uploads ────────────────────────────────────────────────────
 app.use('/uploads', express.static(path.resolve(process.cwd(), 'uploads')));

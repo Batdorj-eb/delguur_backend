@@ -29,11 +29,25 @@ const imageFileFilter: multer.Options['fileFilter'] = (_req, file, cb) => {
   cb(new AppError(400, 'Зөвхөн зураг файл upload хийж болно.'));
 };
 
+/** Nginx `client_max_body_size`-аас ихгүйг сонгоно (анхдагч 15MB). */
+function maxUploadBytes(): number {
+  const cap = 50 * 1024 * 1024;
+  const fromBytes = process.env.MAX_FILE_SIZE?.trim();
+  if (fromBytes && /^\d+$/.test(fromBytes)) {
+    const n = parseInt(fromBytes, 10);
+    if (n > 0) return Math.min(cap, n);
+  }
+  const mb = parseInt(process.env.UPLOAD_MAX_FILE_MB || '15', 10);
+  const safeMb = Number.isFinite(mb) ? Math.min(50, Math.max(1, mb)) : 15;
+  return safeMb * 1024 * 1024;
+}
+
 export const upload = multer({
   storage,
   fileFilter: imageFileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024,
+    fileSize: maxUploadBytes(),
+    fieldSize: 2 * 1024 * 1024,
   },
 });
 

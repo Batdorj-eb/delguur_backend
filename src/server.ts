@@ -25,11 +25,52 @@ app.use(
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 // ── CORS ──────────────────────────────────────────────────────────────
+function buildAllowedOrigins(): string[] {
+  const out = new Set<string>([
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3001',
+  ]);
+
+  const extra = process.env.CLIENT_URLS?.split(',') ?? [];
+  for (const raw of extra) {
+    const t = raw.trim();
+    if (t) out.add(t);
+  }
+
+  const client = process.env.CLIENT_URL?.trim();
+  if (client) {
+    out.add(client);
+    try {
+      const url = new URL(client);
+      const host = url.hostname;
+      if (host.startsWith('www.')) {
+        out.add(`${url.protocol}//${host.slice(4)}`);
+      } else {
+        out.add(`${url.protocol}//www.${host}`);
+      }
+    } catch {
+      /* CLIENT_URL буруу URL бол зөвхөн түүнийг л үлдээнэ */
+    }
+  }
+
+  return [...out];
+}
+
+const allowedOrigins = buildAllowedOrigins();
+
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || 'http://localhost:3000',
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(null, false);
+      }
+    },
     credentials: true,
-    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-session-id'],
   })
 );

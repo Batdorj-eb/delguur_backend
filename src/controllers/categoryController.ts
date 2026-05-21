@@ -1,9 +1,30 @@
 import { Request, Response, NextFunction } from 'express';
 import pool from '../config/database';
-import { ApiResponse, Category } from '../types';
+import { ApiResponse, Category, CategoryWithParent } from '../types';
 import { AppError } from '../middleware/errorHandler';
 
-// ── GET /categories (public — sidebar) ───────────────────────────────
+/** Бараанд зөвхөн навч (доош ангилалгүй) түвшин */
+export const assertLeafCategoryName = async (categoryName: string): Promise<void> => {
+  const row = await pool.query<{ id: string }>(
+    'SELECT id FROM categories WHERE name = $1',
+    [categoryName]
+  );
+  if (!row.rows[0]) {
+    throw new AppError(400, 'Ангилал олдсонгүй. Эхлээд админ дээр ангилал үүсгэнэ үү.');
+  }
+  const hasChildren = await pool.query(
+    'SELECT 1 FROM categories WHERE parent_id = $1 LIMIT 1',
+    [row.rows[0].id]
+  );
+  if (hasChildren.rows.length > 0) {
+    throw new AppError(
+      400,
+      'Бараанд зөвхөн хамгийн доод түвшний ангилал сонгоно. Энэ ангиллын доор дэд ангилал байна.'
+    );
+  }
+};
+
+// ── GET /categories (public — зөвхөн навч ангилал) ────────────────────
 export const listCategoriesWithCounts = async (
   _req: Request,
   res: Response,
@@ -13,11 +34,12 @@ export const listCategoriesWithCounts = async (
     const result = await pool.query<{
       id: string;
       name: string;
+      parent_name: string | null;
       count: string;
       cover_image_url: string | null;
     }>(
-      `SELECT c.id, c.name,
-              COUNT(p.id) FILTER (WHERE p.is_active = TRUE)::bigint AS count,
+      `SELECT c.id, c.name, p.name AS parent_name,
+              COUNT(pr.id) FILTER (WHERE pr.is_active = TRUE)::bigint AS count,
               (
                 SELECT p2.image_url
                 FROM products p2
@@ -26,17 +48,22 @@ export const listCategoriesWithCounts = async (
                 LIMIT 1
               ) AS cover_image_url
        FROM categories c
-       LEFT JOIN products p ON p.category = c.name
-       GROUP BY c.id, c.name
+       LEFT JOIN categories p ON p.id = c.parent_id
+       LEFT JOIN products pr ON pr.category = c.name
+       WHERE NOT EXISTS (SELECT 1 FROM categories ch WHERE ch.parent_id = c.id)
+       GROUP BY c.id, c.name, p.name
        ORDER BY c.name`
     );
 
     res.json(
-      <ApiResponse<{ id: string; name: string; count: number; cover_image_url: string | null }[]>>{
+      <ApiResponse<
+        { id: string; name: string; parent_name: string | null; count: number; cover_image_url: string | null }[]
+      >>{
         success: true,
         data: result.rows.map((r) => ({
           id: r.id,
           name: r.name,
+          parent_name: r.parent_name,
           count: Number(r.count),
           cover_image_url: r.cover_image_url,
         })),
@@ -54,13 +81,30 @@ export const listAllCategories = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const result = await pool.query<Category>(
-      `SELECT id, name, created_at FROM categories ORDER BY name`
+    const result = await pool.query<CategoryWithParent>(
+      `SELECT c.id, c.name, c.parent_id, c.created_at, p.name AS parent_name
+       FROM categories c
+       LEFT JOIN categories p ON p.id = c.parent_id
+       ORDER BY c.name`
     );
-    res.json(<ApiResponse<Category[]>>{ success: true, data: result.rows });
+    res.json(<ApiResponse<CategoryWithParent[]>>{ success: true, data: result.rows });
   } catch (err) {
     next(err);
   }
+};
+
+const resolveParent = async (parentId: string | undefined): Promise<string | null> => {
+  if (!parentId?.trim()) {
+    return null;
+  }
+  const parent = await pool.query<{ id: string }>(
+    'SELECT id FROM categories WHERE id = $1',
+    [parentId.trim()]
+  );
+  if (!parent.rows[0]) {
+    throw new AppError(400, 'Дээд ангилал олдсонгүй.');
+  }
+  return parent.rows[0].id;
 };
 
 // ── POST /admin/categories ──────────────────────────────────────────────
@@ -71,6 +115,8 @@ export const createCategory = async (
 ): Promise<void> => {
   try {
     const name = (req.body?.name as string | undefined)?.trim();
+    const parentIdRaw = req.body?.parent_id as string | undefined;
+
     if (!name) {
       throw new AppError(400, 'Ангиллын нэр шаардлагатай.');
     }
@@ -78,9 +124,11 @@ export const createCategory = async (
       throw new AppError(400, 'Нэр хэт урт байна (хамгийн ихдээ 100 тэмдэгт).');
     }
 
+    const parentId = await resolveParent(parentIdRaw);
+
     const result = await pool.query<Category>(
-      `INSERT INTO categories (name) VALUES ($1) RETURNING id, name, created_at`,
-      [name]
+      `INSERT INTO categories (name, parent_id) VALUES ($1, $2) RETURNING id, name, parent_id, created_at`,
+      [name, parentId]
     );
 
     res.status(201).json(<ApiResponse<Category>>{
@@ -114,6 +162,19 @@ export const deleteCategory = async (
     }
 
     const catName = existing.rows[0].name;
+
+    const children = await pool.query(
+      'SELECT COUNT(*)::bigint AS n FROM categories WHERE parent_id = $1',
+      [req.params.id]
+    );
+    const childCount = Number(children.rows[0].n);
+    if (childCount > 0) {
+      throw new AppError(
+        400,
+        `Доош ${childCount} ангилал байна. Эхлээд доошх ангиллуудыг устгана уу.`
+      );
+    }
+
     const usage = await pool.query(
       'SELECT COUNT(*)::bigint AS n FROM products WHERE category = $1',
       [catName]

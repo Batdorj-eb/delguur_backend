@@ -45,8 +45,13 @@ const createTables = async (): Promise<void> => {
       CREATE TABLE IF NOT EXISTS categories (
         id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name        VARCHAR(100) UNIQUE NOT NULL,
+        parent_id   UUID REFERENCES categories(id) ON DELETE RESTRICT,
         created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+    `);
+
+    await client.query(`
+      ALTER TABLE categories ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES categories(id) ON DELETE RESTRICT;
     `);
 
     await client.query(`
@@ -153,6 +158,7 @@ const createTables = async (): Promise<void> => {
     // ── 8. INDEXES ────────────────────────────────────────────────────
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_categories_name ON categories(name);
+      CREATE INDEX IF NOT EXISTS idx_categories_parent_id ON categories(parent_id);
       CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);
       CREATE INDEX IF NOT EXISTS idx_products_is_active ON products(is_active);
       CREATE INDEX IF NOT EXISTS idx_cart_items_cart_id ON cart_items(cart_id);

@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import pool from '../config/database';
 import { Product, CreateProductDto, UpdateProductDto, ApiResponse } from '../types';
 import { AppError } from '../middleware/errorHandler';
+import { assertLeafCategoryName } from './categoryController';
 
 // ── GET /products ─────────────────────────────────────────────────────
 export const getProducts = async (
@@ -129,6 +130,11 @@ export const createProduct = async (
       throw new AppError(400, 'Үнэ сөрөг байж болохгүй.');
     }
 
+    const categoryName = dto.category?.trim() || null;
+    if (categoryName) {
+      await assertLeafCategoryName(categoryName);
+    }
+
     const result = await pool.query<Product>(
       `INSERT INTO products (name, description, price, image_url, category, stock, is_featured)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -138,7 +144,7 @@ export const createProduct = async (
         dto.description?.trim() || null,
         dto.price,
         dto.image_url?.trim() || null,
-        dto.category?.trim() || null,
+        categoryName,
         dto.stock ?? 0,
         dto.is_featured === true,
       ]
@@ -173,6 +179,12 @@ export const updateProduct = async (
     }
 
     const p = existing.rows[0];
+    const nextCategory =
+      dto.category !== undefined ? dto.category?.trim() || null : p.category;
+    if (nextCategory) {
+      await assertLeafCategoryName(nextCategory);
+    }
+
     const result = await pool.query<Product>(
       `UPDATE products
        SET name=$1, description=$2, price=$3, image_url=$4,
@@ -184,7 +196,7 @@ export const updateProduct = async (
         dto.description?.trim() ?? p.description,
         dto.price ?? p.price,
         dto.image_url?.trim() ?? p.image_url,
-        dto.category?.trim() ?? p.category,
+        nextCategory,
         dto.stock ?? p.stock,
         dto.is_active ?? p.is_active,
         dto.is_featured !== undefined ? dto.is_featured === true : p.is_featured,

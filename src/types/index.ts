@@ -2,7 +2,12 @@
 export interface Category {
   id: string;
   name: string;
+  parent_id: string | null;
   created_at: Date;
+}
+
+export interface CategoryWithParent extends Category {
+  parent_name: string | null;
 }
 
 // ── Product ───────────────────────────────────────────────────────────

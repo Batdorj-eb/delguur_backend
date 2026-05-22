@@ -1,9 +1,15 @@
 import { Router } from 'express';
 import { login, getMe } from '../controllers/authController';
 import {
-  getProducts, getProductById, getCategories,
-  createProduct, updateProduct, deleteProduct,
+  getProducts,
+  getProductById,
+  getAdminProductById,
+  getCategories,
+  createProduct,
+  updateProduct,
+  deleteProduct,
 } from '../controllers/productController';
+import { listColors, createColor, deleteColor } from '../controllers/colorController';
 import {
   getCart, addToCart, updateCartItem,
   removeFromCart, clearCart,
@@ -48,8 +54,13 @@ router.get('/products/:id', getProductById);
 router.post('/admin/products', authenticate, createProduct);
 router.patch('/admin/products/:id', authenticate, updateProduct);
 router.delete('/admin/products/:id', authenticate, deleteProduct);
-// Admin can see all products (including inactive)
+router.get('/admin/products/:id', authenticate, getAdminProductById);
 router.get('/admin/products', authenticate, getProducts);
+
+// Admin colors
+router.get('/admin/colors', authenticate, listColors);
+router.post('/admin/colors', authenticate, createColor);
+router.delete('/admin/colors/:id', authenticate, deleteColor);
 
 // ── Cart (Public — session-based) ─────────────────────────────────────
 router.get('/cart', getCart);

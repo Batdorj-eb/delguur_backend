@@ -10,6 +10,38 @@ export interface CategoryWithParent extends Category {
   parent_name: string | null;
 }
 
+// ── Color ─────────────────────────────────────────────────────────────
+export interface Color {
+  id: string;
+  name: string;
+  hex_code: string;
+  created_at: Date;
+}
+
+export interface ProductImageDto {
+  id?: string;
+  image_url: string;
+  is_primary?: boolean;
+  sort_order?: number;
+}
+
+export interface ProductColorDto {
+  id: string;
+  name: string;
+  hex_code: string;
+  stock?: number;
+}
+
+export interface ProductColorStockDto {
+  color_id: string;
+  stock: number;
+}
+
+export interface ProductColorImageDto {
+  color_id: string;
+  image_url: string;
+}
+
 // ── Product ───────────────────────────────────────────────────────────
 export interface Product {
   id: string;
@@ -23,6 +55,9 @@ export interface Product {
   is_featured: boolean;
   created_at: Date;
   updated_at: Date;
+  images?: ProductImageDto[];
+  colors?: ProductColorDto[];
+  color_images?: ProductColorImageDto[];
 }
 
 export interface CreateProductDto {
@@ -30,9 +65,18 @@ export interface CreateProductDto {
   description?: string;
   price: number;
   image_url?: string;
+  images?: ProductImageInput[];
   category?: string;
   stock?: number;
   is_featured?: boolean;
+  color_ids?: string[];
+  color_images?: ProductColorImageDto[];
+  color_stocks?: ProductColorStockDto[];
+}
+
+export interface ProductImageInput {
+  image_url: string;
+  is_primary?: boolean;
 }
 
 export interface UpdateProductDto extends Partial<CreateProductDto> {
@@ -73,6 +117,7 @@ export interface CartItem {
   id: string;
   cart_id: string;
   product_id: string;
+  color_id?: string | null;
   quantity: number;
   created_at: Date;
   updated_at: Date;
@@ -81,12 +126,15 @@ export interface CartItem {
   product_price?: number;
   product_image?: string;
   product_stock?: number;
+  color_name?: string;
+  color_hex?: string;
   subtotal?: number;
 }
 
 export interface CartItemDto {
   product_id: string;
   quantity: number;
+  color_id?: string;
 }
 
 // ── Order ─────────────────────────────────────────────────────────────
@@ -137,6 +185,7 @@ export interface CreateOrderDto {
   items: {
     product_id: string;
     quantity: number;
+    color_id?: string;
   }[];
   /** Дансаар төлөх үед заавал — checkout-оос авсан 6 тэмдэгт */
   reference_code?: string;

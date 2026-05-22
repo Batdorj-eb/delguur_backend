@@ -2,7 +2,32 @@ import { Request, Response, NextFunction } from 'express';
 import pool from '../config/database';
 import { Product, CreateProductDto, UpdateProductDto, ApiResponse } from '../types';
 import { AppError } from '../middleware/errorHandler';
-import { assertLeafCategoryName } from './categoryController';
+import { assertCategoryExists } from './categoryController';
+import {
+  enrichProductRow,
+  loadProductColors,
+  loadProductImages,
+  loadProductColorImages,
+  saveProductRelations,
+  type ProductImageInput,
+  type ProductColorImageInput,
+  type ProductColorStockInput,
+} from '../services/productRelations';
+
+const parseImages = (body: CreateProductDto): ProductImageInput[] => {
+  if (Array.isArray(body.images) && body.images.length > 0) {
+    return body.images
+      .filter((i) => i?.image_url?.trim())
+      .map((i) => ({
+        image_url: i.image_url.trim(),
+        is_primary: i.is_primary === true,
+      }));
+  }
+  if (body.image_url?.trim()) {
+    return [{ image_url: body.image_url.trim(), is_primary: true }];
+  }
+  return [];
+};
 
 // ── GET /products ─────────────────────────────────────────────────────
 export const getProducts = async (
@@ -16,7 +41,6 @@ export const getProducts = async (
     const offset = (page - 1) * limit;
     const category = req.query.category as string | undefined;
     const search = req.query.search as string | undefined;
-    // Admin-д inactive барааг харуулна, public-д зөвхөн active
     const isAdmin = !!req.user;
 
     const conditions: string[] = [];
@@ -24,34 +48,34 @@ export const getProducts = async (
     let paramIndex = 1;
 
     if (!isAdmin) {
-      conditions.push(`is_active = TRUE`);
+      conditions.push(`p.is_active = TRUE`);
     }
     if (category) {
-      conditions.push(`category = $${paramIndex++}`);
+      conditions.push(`p.category = $${paramIndex++}`);
       params.push(category);
     }
     if (search) {
-      conditions.push(`(name ILIKE $${paramIndex} OR description ILIKE $${paramIndex})`);
+      conditions.push(`(p.name ILIKE $${paramIndex} OR p.description ILIKE $${paramIndex})`);
       params.push(`%${search}%`);
       paramIndex++;
     }
     const featuredOnly =
       req.query.featured === '1' || req.query.featured === 'true' || req.query.featured === 'yes';
     if (featuredOnly) {
-      conditions.push(`is_featured = TRUE`);
+      conditions.push(`p.is_featured = TRUE`);
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const countResult = await pool.query(
-      `SELECT COUNT(*) FROM products ${where}`,
+      `SELECT COUNT(*) FROM products p ${where}`,
       params
     );
     const total = parseInt(countResult.rows[0].count);
 
     const result = await pool.query<Product>(
-      `SELECT * FROM products ${where}
-       ORDER BY created_at DESC
+      `SELECT p.* FROM products p ${where}
+       ORDER BY p.created_at DESC
        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
       [...params, limit, offset]
     );
@@ -78,8 +102,11 @@ export const getProductById = async (
   next: NextFunction
 ): Promise<void> => {
   try {
+    const isAdmin = !!req.user;
     const result = await pool.query<Product>(
-      'SELECT * FROM products WHERE id = $1 AND is_active = TRUE',
+      isAdmin
+        ? 'SELECT * FROM products WHERE id = $1'
+        : 'SELECT * FROM products WHERE id = $1 AND is_active = TRUE',
       [req.params.id]
     );
 
@@ -87,7 +114,28 @@ export const getProductById = async (
       throw new AppError(404, 'Бараа олдсонгүй.');
     }
 
-    res.json(<ApiResponse<Product>>{ success: true, data: result.rows[0] });
+    const enriched = await enrichProductRow(result.rows[0]);
+    res.json(<ApiResponse<typeof enriched>>{ success: true, data: enriched });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ── GET /admin/products/:id ───────────────────────────────────────────
+export const getAdminProductById = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const result = await pool.query<Product>('SELECT * FROM products WHERE id = $1', [
+      req.params.id,
+    ]);
+    if (!result.rows[0]) {
+      throw new AppError(404, 'Бараа олдсонгүй.');
+    }
+    const enriched = await enrichProductRow(result.rows[0]);
+    res.json(<ApiResponse<typeof enriched>>{ success: true, data: enriched });
   } catch (err) {
     next(err);
   }
@@ -132,8 +180,23 @@ export const createProduct = async (
 
     const categoryName = dto.category?.trim() || null;
     if (categoryName) {
-      await assertLeafCategoryName(categoryName);
+      await assertCategoryExists(categoryName);
     }
+
+    const images = parseImages(dto);
+    if (images.length === 0) {
+      throw new AppError(400, 'Дор хаяж нэг зураг шаардлагатай.');
+    }
+
+    const primaryUrl =
+      images.find((i) => i.is_primary)?.image_url || images[0].image_url;
+
+    const colorIds = dto.color_ids || [];
+    const colorStocks = (dto.color_stocks || []) as ProductColorStockInput[];
+    const totalStock =
+      colorIds.length > 0
+        ? colorStocks.reduce((s, c) => s + Math.max(0, Math.floor(Number(c.stock) || 0)), 0)
+        : Math.max(0, Math.floor(Number(dto.stock) || 0));
 
     const result = await pool.query<Product>(
       `INSERT INTO products (name, description, price, image_url, category, stock, is_featured)
@@ -143,17 +206,30 @@ export const createProduct = async (
         dto.name.trim(),
         dto.description?.trim() || null,
         dto.price,
-        dto.image_url?.trim() || null,
+        primaryUrl,
         categoryName,
-        dto.stock ?? 0,
+        totalStock,
         dto.is_featured === true,
       ]
     );
 
-    res.status(201).json(<ApiResponse<Product>>{
+    const product = result.rows[0];
+    await saveProductRelations(
+      product.id,
+      images,
+      colorIds,
+      (dto.color_images || []) as ProductColorImageInput[],
+      colorStocks
+    );
+
+    const enriched = await enrichProductRow(
+      (await pool.query<Product>('SELECT * FROM products WHERE id = $1', [product.id])).rows[0]
+    );
+
+    res.status(201).json(<ApiResponse<typeof enriched>>{
       success: true,
       message: 'Бараа амжилттай нэмэгдлээ.',
-      data: result.rows[0],
+      data: enriched,
     });
   } catch (err) {
     next(err);
@@ -168,12 +244,9 @@ export const updateProduct = async (
 ): Promise<void> => {
   try {
     const dto: UpdateProductDto = req.body;
-    const { id } = req.params;
+    const id = String(req.params.id);
 
-    const existing = await pool.query<Product>(
-      'SELECT * FROM products WHERE id = $1',
-      [id]
-    );
+    const existing = await pool.query<Product>('SELECT * FROM products WHERE id = $1', [id]);
     if (!existing.rows[0]) {
       throw new AppError(404, 'Бараа олдсонгүй.');
     }
@@ -182,20 +255,19 @@ export const updateProduct = async (
     const nextCategory =
       dto.category !== undefined ? dto.category?.trim() || null : p.category;
     if (nextCategory) {
-      await assertLeafCategoryName(nextCategory);
+      await assertCategoryExists(nextCategory);
     }
 
     const result = await pool.query<Product>(
       `UPDATE products
-       SET name=$1, description=$2, price=$3, image_url=$4,
-           category=$5, stock=$6, is_active=$7, is_featured=$8
-       WHERE id=$9
+       SET name=$1, description=$2, price=$3,
+           category=$4, stock=$5, is_active=$6, is_featured=$7
+       WHERE id=$8
        RETURNING *`,
       [
         dto.name?.trim() ?? p.name,
         dto.description?.trim() ?? p.description,
         dto.price ?? p.price,
-        dto.image_url?.trim() ?? p.image_url,
         nextCategory,
         dto.stock ?? p.stock,
         dto.is_active ?? p.is_active,
@@ -204,10 +276,65 @@ export const updateProduct = async (
       ]
     );
 
-    res.json(<ApiResponse<Product>>{
+    if (
+      dto.images !== undefined ||
+      dto.color_ids !== undefined ||
+      dto.color_images !== undefined
+    ) {
+      let images: ProductImageInput[];
+      if (dto.images !== undefined) {
+        images = parseImages({ ...dto, name: p.name, price: p.price } as CreateProductDto);
+      } else {
+        const existingImgs = await loadProductImages(id);
+        images = existingImgs.map((i) => ({
+          image_url: i.image_url,
+          is_primary: i.is_primary,
+        }));
+      }
+
+      let colorIds = dto.color_ids;
+      if (colorIds === undefined) {
+        const existingColors = await loadProductColors(id);
+        colorIds = existingColors.map((c) => c.id);
+      }
+
+      let colorImages = dto.color_images as ProductColorImageInput[] | undefined;
+      if (colorImages === undefined) {
+        colorImages = await loadProductColorImages(id);
+      }
+
+      let colorStocks = dto.color_stocks as ProductColorStockInput[] | undefined;
+      if (colorStocks === undefined && colorIds.length > 0) {
+        const existingColors = await loadProductColors(id);
+        colorStocks = existingColors.map((c) => ({
+          color_id: c.id,
+          stock: Number(c.stock ?? 0),
+        }));
+      }
+
+      await saveProductRelations(
+        id,
+        images,
+        colorIds,
+        colorImages,
+        colorStocks
+      );
+    } else if (dto.image_url !== undefined && dto.image_url?.trim()) {
+      await saveProductRelations(
+        id,
+        [{ image_url: dto.image_url.trim(), is_primary: true }],
+        [],
+        []
+      );
+    }
+
+    const fresh = await pool.query<Product>('SELECT * FROM products WHERE id = $1', [id]);
+    const enriched = await enrichProductRow(fresh.rows[0]);
+
+    res.json(<ApiResponse<typeof enriched>>{
       success: true,
       message: 'Бараа амжилттай шинэчлэгдлээ.',
-      data: result.rows[0],
+      data: enriched,
     });
   } catch (err) {
     next(err);
@@ -221,10 +348,9 @@ export const deleteProduct = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const result = await pool.query(
-      'DELETE FROM products WHERE id = $1 RETURNING id',
-      [req.params.id]
-    );
+    const result = await pool.query('DELETE FROM products WHERE id = $1 RETURNING id', [
+      req.params.id,
+    ]);
 
     if (!result.rows[0]) {
       throw new AppError(404, 'Бараа олдсонгүй.');

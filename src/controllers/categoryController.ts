@@ -3,28 +3,15 @@ import pool from '../config/database';
 import { ApiResponse, Category, CategoryWithParent } from '../types';
 import { AppError } from '../middleware/errorHandler';
 
-/** Бараанд зөвхөн навч (доош ангилалгүй) түвшин */
-export const assertLeafCategoryName = async (categoryName: string): Promise<void> => {
-  const row = await pool.query<{ id: string }>(
-    'SELECT id FROM categories WHERE name = $1',
-    [categoryName]
-  );
+/** Бараанд сонгосон ангилал categories хүснэгтэд байгаа эсэх */
+export const assertCategoryExists = async (categoryName: string): Promise<void> => {
+  const row = await pool.query('SELECT 1 FROM categories WHERE name = $1', [categoryName]);
   if (!row.rows[0]) {
     throw new AppError(400, 'Ангилал олдсонгүй. Эхлээд админ дээр ангилал үүсгэнэ үү.');
   }
-  const hasChildren = await pool.query(
-    'SELECT 1 FROM categories WHERE parent_id = $1 LIMIT 1',
-    [row.rows[0].id]
-  );
-  if (hasChildren.rows.length > 0) {
-    throw new AppError(
-      400,
-      'Бараанд зөвхөн хамгийн доод түвшний ангилал сонгоно. Энэ ангиллын доор дэд ангилал байна.'
-    );
-  }
 };
 
-// ── GET /categories (public — зөвхөн навч ангилал) ────────────────────
+// ── GET /categories (public — бүх түвшин, шууд барааны тоо) ───────────
 export const listCategoriesWithCounts = async (
   _req: Request,
   res: Response,
@@ -50,7 +37,6 @@ export const listCategoriesWithCounts = async (
        FROM categories c
        LEFT JOIN categories p ON p.id = c.parent_id
        LEFT JOIN products pr ON pr.category = c.name
-       WHERE NOT EXISTS (SELECT 1 FROM categories ch WHERE ch.parent_id = c.id)
        GROUP BY c.id, c.name, p.name
        ORDER BY c.name`
     );

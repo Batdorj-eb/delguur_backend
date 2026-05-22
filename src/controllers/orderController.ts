@@ -3,6 +3,11 @@ import pool from '../config/database';
 import { CreateOrderDto, Order, ApiResponse, OrderStatus, PaymentStatus } from '../types';
 import { AppError } from '../middleware/errorHandler';
 import { getSessionId } from '../utils/getSessionId';
+import {
+  assertVariantStockAvailable,
+  deductVariantStock,
+  productHasColors,
+} from '../services/productStock';
 
 /** I, O, 0, 1-гүй — checkoutReferenceController-тай ижил */
 const PAYMENT_REF_CODE_RE = /^[A-HJ-NP-Z2-9]{6}$/;
@@ -78,40 +83,60 @@ export const createOrder = async (
     let subtotal = 0;
     const resolvedItems: {
       product_id: string;
+      color_id: string | null;
+      color_name: string | null;
       name: string;
       price: number;
       quantity: number;
       subtotal: number;
     }[] = [];
 
-    // Бүх барааг шалгах + нөөц хасах
     for (const item of dto.items) {
       const product = await client.query(
-        'SELECT id, name, price, stock, is_active FROM products WHERE id = $1 FOR UPDATE',
+        'SELECT id, name, price, is_active FROM products WHERE id = $1 FOR UPDATE',
         [item.product_id]
       );
 
       if (!product.rows[0]) throw new AppError(404, `Бараа олдсонгүй: ${item.product_id}`);
-      if (!product.rows[0].is_active) throw new AppError(400, `"${product.rows[0].name}" одоогоор байхгүй.`);
-      if (product.rows[0].stock < item.quantity)
-        throw new AppError(400, `"${product.rows[0].name}" нөөц хүрэлцэхгүй. Нийт: ${product.rows[0].stock}`);
+      if (!product.rows[0].is_active) {
+        throw new AppError(400, `"${product.rows[0].name}" одоогоор байхгүй.`);
+      }
+
+      const colorId = item.color_id?.trim() || null;
+      const hasColors = await productHasColors(item.product_id, client);
+      if (hasColors && !colorId) {
+        throw new AppError(400, `"${product.rows[0].name}" — өнгө сонгоно уу.`);
+      }
+
+      await assertVariantStockAvailable(item.product_id, colorId, item.quantity, client);
+
+      let colorName: string | null = null;
+      if (colorId) {
+        const colorRow = await client.query<{ name: string }>(
+          'SELECT name FROM colors WHERE id = $1',
+          [colorId]
+        );
+        colorName = colorRow.rows[0]?.name ?? null;
+      }
+
+      const displayName = colorName
+        ? `${product.rows[0].name} (${colorName})`
+        : (product.rows[0].name as string);
 
       const itemSubtotal = Number(product.rows[0].price) * item.quantity;
       subtotal += itemSubtotal;
 
       resolvedItems.push({
         product_id: item.product_id,
-        name: product.rows[0].name as string,
+        color_id: colorId,
+        color_name: colorName,
+        name: displayName,
         price: Number(product.rows[0].price),
         quantity: item.quantity,
         subtotal: itemSubtotal,
       });
 
-      // Нөөц хасах
-      await client.query(
-        'UPDATE products SET stock = stock - $1 WHERE id = $2',
-        [item.quantity, item.product_id]
-      );
+      await deductVariantStock(item.product_id, colorId, item.quantity, client);
     }
 
     const shippingFee = isPickup ? 0 : DELIVERY_SHIPPING_FEE_MNT;
@@ -168,9 +193,18 @@ export const createOrder = async (
     // Order items нэмэх
     for (const item of resolvedItems) {
       await client.query(
-        `INSERT INTO order_items (order_id, product_id, name, price, quantity, subtotal)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
-        [order.id, item.product_id, item.name, item.price, item.quantity, item.subtotal]
+        `INSERT INTO order_items (order_id, product_id, color_id, color_name, name, price, quantity, subtotal)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [
+          order.id,
+          item.product_id,
+          item.color_id,
+          item.color_name,
+          item.name,
+          item.price,
+          item.quantity,
+          item.subtotal,
+        ]
       );
     }
 

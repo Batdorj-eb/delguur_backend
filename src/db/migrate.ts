@@ -40,6 +40,53 @@ const createTables = async (): Promise<void> => {
       ALTER TABLE products ADD COLUMN IF NOT EXISTS is_featured BOOLEAN NOT NULL DEFAULT FALSE;
     `);
 
+    // ── 2a. COLORS (admin palette) ───────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS colors (
+        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name        VARCHAR(100) UNIQUE NOT NULL,
+        hex_code    VARCHAR(7) NOT NULL,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS product_images (
+        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        product_id  UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        image_url   TEXT NOT NULL,
+        is_primary  BOOLEAN NOT NULL DEFAULT FALSE,
+        sort_order  INTEGER NOT NULL DEFAULT 0,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS product_colors (
+        product_id  UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        color_id    UUID NOT NULL REFERENCES colors(id) ON DELETE RESTRICT,
+        PRIMARY KEY (product_id, color_id)
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS product_color_images (
+        product_id        UUID NOT NULL,
+        color_id          UUID NOT NULL,
+        product_image_id  UUID NOT NULL REFERENCES product_images(id) ON DELETE CASCADE,
+        PRIMARY KEY (product_id, color_id),
+        FOREIGN KEY (product_id, color_id) REFERENCES product_colors(product_id, color_id) ON DELETE CASCADE
+      );
+    `);
+
+    await client.query(`
+      INSERT INTO product_images (product_id, image_url, is_primary, sort_order)
+      SELECT id, image_url, TRUE, 0
+      FROM products
+      WHERE image_url IS NOT NULL AND TRIM(image_url) <> ''
+      AND NOT EXISTS (SELECT 1 FROM product_images pi WHERE pi.product_id = products.id);
+    `);
+
     // ── 2b. CATEGORIES (canonical list; products.category matches name) ─
     await client.query(`
       CREATE TABLE IF NOT EXISTS categories (
@@ -161,6 +208,8 @@ const createTables = async (): Promise<void> => {
       CREATE INDEX IF NOT EXISTS idx_categories_parent_id ON categories(parent_id);
       CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);
       CREATE INDEX IF NOT EXISTS idx_products_is_active ON products(is_active);
+      CREATE INDEX IF NOT EXISTS idx_product_images_product ON product_images(product_id);
+      CREATE INDEX IF NOT EXISTS idx_product_colors_product ON product_colors(product_id);
       CREATE INDEX IF NOT EXISTS idx_cart_items_cart_id ON cart_items(cart_id);
       CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id);
       CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
@@ -178,6 +227,37 @@ const createTables = async (): Promise<void> => {
 
     await client.query(`
       ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_ref_code VARCHAR(6);
+    `);
+
+    // ── Өнгө бүрт нөөц + сагс/захиалгад өнгө ─────────────────────────────
+    await client.query(`
+      ALTER TABLE product_colors ADD COLUMN IF NOT EXISTS stock INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0);
+    `);
+
+    await client.query(`
+      ALTER TABLE cart_items ADD COLUMN IF NOT EXISTS color_id UUID REFERENCES colors(id) ON DELETE SET NULL;
+    `);
+
+    await client.query(`
+      ALTER TABLE cart_items DROP CONSTRAINT IF EXISTS cart_items_cart_id_product_id_key;
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_cart_items_cart_product_no_color
+      ON cart_items (cart_id, product_id) WHERE color_id IS NULL;
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_cart_items_cart_product_with_color
+      ON cart_items (cart_id, product_id, color_id) WHERE color_id IS NOT NULL;
+    `);
+
+    await client.query(`
+      ALTER TABLE order_items ADD COLUMN IF NOT EXISTS color_id UUID REFERENCES colors(id) ON DELETE SET NULL;
+    `);
+
+    await client.query(`
+      ALTER TABLE order_items ADD COLUMN IF NOT EXISTS color_name VARCHAR(100);
     `);
 
     await client.query(`

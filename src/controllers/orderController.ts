@@ -7,6 +7,7 @@ import {
   assertVariantStockAvailable,
   deductVariantStock,
   productHasColors,
+  restoreVariantStock,
 } from '../services/productStock';
 
 /** I, O, 0, 1-гүй — checkoutReferenceController-тай ижил */
@@ -404,5 +405,54 @@ export const updateOrderStatus = async (
     });
   } catch (err) {
     next(err);
+  }
+};
+
+// ── DELETE /admin/orders/:id ────────────────────────────────────────────
+export const deleteOrder = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  const client = await pool.connect();
+  let inTransaction = false;
+  try {
+    const { id } = req.params;
+
+    const orderResult = await client.query<Order>('SELECT * FROM orders WHERE id = $1', [id]);
+    if (!orderResult.rows[0]) {
+      throw new AppError(404, 'Захиалга олдсонгүй.');
+    }
+
+    const items = await client.query<{
+      product_id: string;
+      color_id: string | null;
+      quantity: number;
+    }>(
+      'SELECT product_id, color_id, quantity FROM order_items WHERE order_id = $1',
+      [id]
+    );
+
+    await client.query('BEGIN');
+    inTransaction = true;
+
+    for (const item of items.rows) {
+      const colorId = item.color_id?.trim() || null;
+      await restoreVariantStock(item.product_id, colorId, Number(item.quantity), client);
+    }
+
+    await client.query('DELETE FROM orders WHERE id = $1', [id]);
+
+    await client.query('COMMIT');
+    inTransaction = false;
+
+    res.json(<ApiResponse>{ success: true, message: 'Захиалга амжилттай устгагдлаа.' });
+  } catch (err) {
+    if (inTransaction) {
+      await client.query('ROLLBACK');
+    }
+    next(err);
+  } finally {
+    client.release();
   }
 };

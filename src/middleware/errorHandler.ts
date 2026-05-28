@@ -36,6 +36,15 @@ export const errorHandler = (
     return;
   }
 
+  // PostgreSQL foreign key violation (e.g. deleting ordered products)
+  if ((err as NodeJS.ErrnoException).code === '23503') {
+    res.status(409).json(<ApiResponse>{
+      success: false,
+      error: 'Энэ бараа захиалгад орсон тул устгах боломжгүй.',
+    });
+    return;
+  }
+
   res.status(500).json(<ApiResponse>{
     success: false,
     error: 'Серверийн алдаа гарлаа. Дахин оролдоно уу.',

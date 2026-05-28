@@ -91,3 +91,25 @@ export const deductVariantStock = async (
     [quantity, productId]
   );
 };
+
+export const restoreVariantStock = async (
+  productId: string,
+  colorId: string | null,
+  quantity: number,
+  db: Queryable = pool
+): Promise<void> => {
+  const hasColors = await productHasColors(productId, db);
+  if (hasColors && colorId) {
+    await db.query(
+      `UPDATE product_colors SET stock = stock + $1
+       WHERE product_id = $2 AND color_id = $3`,
+      [quantity, productId, colorId]
+    );
+    await syncProductStockFromColors(productId, db);
+    return;
+  }
+  await db.query('UPDATE products SET stock = stock + $1 WHERE id = $2', [
+    quantity,
+    productId,
+  ]);
+};

@@ -21,6 +21,7 @@ import {
   getAdminOrderById,
   getPendingOrdersCount,
   updateOrderStatus,
+  deleteOrder,
 } from '../controllers/orderController';
 import { allocateCheckoutReferenceCode } from '../controllers/checkoutReferenceController';
 import {
@@ -81,6 +82,7 @@ router.get('/admin/orders/pending-count', authenticate, getPendingOrdersCount);
 router.get('/admin/orders', authenticate, getAllOrders);
 router.get('/admin/orders/:id', authenticate, getAdminOrderById);
 router.patch('/admin/orders/:id/status', authenticate, updateOrderStatus);
+router.delete('/admin/orders/:id', authenticate, deleteOrder);
 
 // Admin site (hero зураг)
 router.get('/admin/site', authenticate, getAdminSite);

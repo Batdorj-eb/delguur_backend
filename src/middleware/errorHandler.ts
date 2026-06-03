@@ -1,5 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
+import multer from 'multer';
 import { ApiResponse } from '../types';
+import { uploadLimitMessage } from '../config/uploadLimits';
 
 export class AppError extends Error {
   constructor(
@@ -23,6 +25,21 @@ export const errorHandler = (
     res.status(err.statusCode).json(<ApiResponse>{
       success: false,
       error: err.message,
+    });
+    return;
+  }
+
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      res.status(413).json(<ApiResponse>{
+        success: false,
+        error: uploadLimitMessage(),
+      });
+      return;
+    }
+    res.status(400).json(<ApiResponse>{
+      success: false,
+      error: 'Файл upload хийхэд алдаа гарлаа.',
     });
     return;
   }

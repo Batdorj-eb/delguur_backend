@@ -51,6 +51,15 @@ const createTables = async (): Promise<void> => {
     `);
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS sizes (
+        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name        VARCHAR(30) UNIQUE NOT NULL,
+        sort_order  INTEGER NOT NULL DEFAULT 0,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS product_images (
         id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         product_id  UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
@@ -232,6 +241,11 @@ const createTables = async (): Promise<void> => {
     // ── Өнгө бүрт нөөц + сагс/захиалгад өнгө ─────────────────────────────
     await client.query(`
       ALTER TABLE product_colors ADD COLUMN IF NOT EXISTS stock INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0);
+    `);
+
+    await client.query(`
+      ALTER TABLE product_colors
+      ADD COLUMN IF NOT EXISTS size_stocks JSONB NOT NULL DEFAULT '[]'::jsonb;
     `);
 
     await client.query(`

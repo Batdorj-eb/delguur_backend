@@ -6,6 +6,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import routes from './routes';
 import { errorHandler, notFound } from './middleware/errorHandler';
+import { maxUploadMb } from './config/uploadLimits';
 
 dotenv.config({ path: path.join(process.cwd(), '.env') });
 
@@ -108,9 +109,10 @@ app.use(
 );
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
-// ── Body parsing ──────────────────────────────────────────────────────
-app.use(express.json({ limit: '15mb' }));
-app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+// ── Body parsing (multipart upload-д хамаарахгүй; JSON payload-тай тааруулна) ──
+const bodyLimit = `${maxUploadMb()}mb`;
+app.use(express.json({ limit: bodyLimit }));
+app.use(express.urlencoded({ extended: true, limit: bodyLimit }));
 
 // ── Static uploads ────────────────────────────────────────────────────
 app.use('/uploads', express.static(path.resolve(process.cwd(), 'uploads')));

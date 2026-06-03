@@ -10,6 +10,7 @@ import {
   deleteProduct,
 } from '../controllers/productController';
 import { listColors, createColor, deleteColor } from '../controllers/colorController';
+import { listSizes, createSize, deleteSize } from '../controllers/sizeController';
 import {
   getCart, addToCart, updateCartItem,
   removeFromCart, clearCart,
@@ -62,6 +63,11 @@ router.get('/admin/products', authenticate, getProducts);
 router.get('/admin/colors', authenticate, listColors);
 router.post('/admin/colors', authenticate, createColor);
 router.delete('/admin/colors/:id', authenticate, deleteColor);
+
+// Admin sizes
+router.get('/admin/sizes', authenticate, listSizes);
+router.post('/admin/sizes', authenticate, createSize);
+router.delete('/admin/sizes/:id', authenticate, deleteSize);
 
 // ── Cart (Public — session-based) ─────────────────────────────────────
 router.get('/cart', getCart);

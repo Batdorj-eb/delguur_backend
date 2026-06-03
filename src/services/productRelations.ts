@@ -14,6 +14,7 @@ export type ProductColorRow = {
   name: string;
   hex_code: string;
   stock: number;
+  size_stocks?: { size: string; stock: number }[];
 };
 
 export type ProductColorImageRow = {
@@ -34,6 +35,20 @@ export type ProductColorImageInput = {
 export type ProductColorStockInput = {
   color_id: string;
   stock: number;
+};
+
+export type ProductColorSizeStockInput = {
+  color_id: string;
+  size: string;
+  stock: number;
+};
+
+type ProductColorDbRow = {
+  id: string;
+  name: string;
+  hex_code: string;
+  stock: number;
+  size_stocks: unknown;
 };
 
 const HEX_RE = /^#([0-9A-Fa-f]{6})$/;
@@ -58,15 +73,35 @@ export const loadProductImages = async (productId: string): Promise<ProductImage
 };
 
 export const loadProductColors = async (productId: string): Promise<ProductColorRow[]> => {
-  const result = await pool.query<ProductColorRow>(
-    `SELECT c.id, c.name, c.hex_code, pc.stock
+  const result = await pool.query<ProductColorDbRow>(
+    `SELECT c.id, c.name, c.hex_code, pc.stock, pc.size_stocks
      FROM product_colors pc
      INNER JOIN colors c ON c.id = pc.color_id
      WHERE pc.product_id = $1
      ORDER BY c.name`,
     [productId]
   );
-  return result.rows;
+  return result.rows.map((row) => {
+    const parsed = Array.isArray(row.size_stocks)
+      ? row.size_stocks
+          .map((s) => {
+            if (!s || typeof s !== 'object') return null;
+            const raw = s as { size?: unknown; stock?: unknown };
+            const size = String(raw.size ?? '').trim();
+            const stock = Math.max(0, Math.floor(Number(raw.stock) || 0));
+            if (!size) return null;
+            return { size, stock };
+          })
+          .filter((s): s is { size: string; stock: number } => !!s)
+      : [];
+    return {
+      id: row.id,
+      name: row.name,
+      hex_code: row.hex_code,
+      stock: row.stock,
+      size_stocks: parsed,
+    };
+  });
 };
 
 export const loadProductColorImages = async (
@@ -100,7 +135,8 @@ export const saveProductRelations = async (
   images: ProductImageInput[],
   colorIds: string[],
   colorImages: ProductColorImageInput[],
-  colorStocks?: ProductColorStockInput[]
+  colorStocks?: ProductColorStockInput[],
+  colorSizeStocks?: ProductColorSizeStockInput[]
 ): Promise<void> => {
   const client = await pool.connect();
   try {
@@ -149,16 +185,32 @@ export const saveProductRelations = async (
       ])
     );
 
+    const sizeStocksByColor = new Map<string, { size: string; stock: number }[]>();
+    for (const s of colorSizeStocks || []) {
+      const colorId = String(s.color_id || '').trim();
+      const size = String(s.size || '').trim();
+      const stock = Math.max(0, Math.floor(Number(s.stock) || 0));
+      if (!colorId || !size) continue;
+      const list = sizeStocksByColor.get(colorId) || [];
+      const idx = list.findIndex((x) => x.size.toLowerCase() === size.toLowerCase());
+      if (idx >= 0) list[idx] = { size, stock };
+      else list.push({ size, stock });
+      sizeStocksByColor.set(colorId, list);
+    }
+
     const uniqueColorIds = [...new Set(colorIds.filter(Boolean))];
     for (const colorId of uniqueColorIds) {
       const exists = await client.query('SELECT 1 FROM colors WHERE id = $1', [colorId]);
       if (!exists.rows[0]) {
         throw new AppError(400, 'Сонгосон өнгө олдсонгүй.');
       }
-      const stock = stockByColor.get(colorId) ?? 0;
+      const sizeStocks = sizeStocksByColor.get(colorId) || [];
+      const sizeSum = sizeStocks.reduce((sum, cur) => sum + cur.stock, 0);
+      const stock = sizeStocks.length > 0 ? sizeSum : (stockByColor.get(colorId) ?? 0);
       await client.query(
-        `INSERT INTO product_colors (product_id, color_id, stock) VALUES ($1, $2, $3)`,
-        [productId, colorId, stock]
+        `INSERT INTO product_colors (product_id, color_id, stock, size_stocks)
+         VALUES ($1, $2, $3, $4::jsonb)`,
+        [productId, colorId, stock, JSON.stringify(sizeStocks)]
       );
     }
 

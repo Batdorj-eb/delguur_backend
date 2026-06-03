@@ -18,6 +18,14 @@ export interface Color {
   created_at: Date;
 }
 
+// ── Size (admin catalog: 56, 57, XS, S, …) ────────────────────────────
+export interface Size {
+  id: string;
+  name: string;
+  sort_order: number;
+  created_at: Date;
+}
+
 export interface ProductImageDto {
   id?: string;
   image_url: string;
@@ -30,10 +38,17 @@ export interface ProductColorDto {
   name: string;
   hex_code: string;
   stock?: number;
+  size_stocks?: ProductColorSizeStockDto[];
 }
 
 export interface ProductColorStockDto {
   color_id: string;
+  stock: number;
+}
+
+export interface ProductColorSizeStockDto {
+  color_id: string;
+  size: string;
   stock: number;
 }
 
@@ -72,6 +87,7 @@ export interface CreateProductDto {
   color_ids?: string[];
   color_images?: ProductColorImageDto[];
   color_stocks?: ProductColorStockDto[];
+  color_size_stocks?: ProductColorSizeStockDto[];
 }
 
 export interface ProductImageInput {

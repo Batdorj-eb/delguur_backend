@@ -12,6 +12,7 @@ import {
   type ProductImageInput,
   type ProductColorImageInput,
   type ProductColorStockInput,
+  type ProductColorSizeStockInput,
 } from '../services/productRelations';
 
 const parseImages = (body: CreateProductDto): ProductImageInput[] => {
@@ -193,9 +194,18 @@ export const createProduct = async (
 
     const colorIds = dto.color_ids || [];
     const colorStocks = (dto.color_stocks || []) as ProductColorStockInput[];
+    const colorSizeStocks = (dto.color_size_stocks || []) as ProductColorSizeStockInput[];
+    const totalFromSizes = colorSizeStocks.reduce(
+      (s, c) => s + Math.max(0, Math.floor(Number(c.stock) || 0)),
+      0
+    );
+    const totalFromColors = colorStocks.reduce(
+      (s, c) => s + Math.max(0, Math.floor(Number(c.stock) || 0)),
+      0
+    );
     const totalStock =
       colorIds.length > 0
-        ? colorStocks.reduce((s, c) => s + Math.max(0, Math.floor(Number(c.stock) || 0)), 0)
+        ? (colorSizeStocks.length > 0 ? totalFromSizes : totalFromColors)
         : Math.max(0, Math.floor(Number(dto.stock) || 0));
 
     const result = await pool.query<Product>(
@@ -219,7 +229,8 @@ export const createProduct = async (
       images,
       colorIds,
       (dto.color_images || []) as ProductColorImageInput[],
-      colorStocks
+      colorStocks,
+      colorSizeStocks
     );
 
     const enriched = await enrichProductRow(
@@ -279,7 +290,9 @@ export const updateProduct = async (
     if (
       dto.images !== undefined ||
       dto.color_ids !== undefined ||
-      dto.color_images !== undefined
+      dto.color_images !== undefined ||
+      dto.color_size_stocks !== undefined ||
+      dto.color_stocks !== undefined
     ) {
       let images: ProductImageInput[];
       if (dto.images !== undefined) {
@@ -312,12 +325,25 @@ export const updateProduct = async (
         }));
       }
 
+      let colorSizeStocks = dto.color_size_stocks as ProductColorSizeStockInput[] | undefined;
+      if (colorSizeStocks === undefined && colorIds.length > 0) {
+        const existingColors = await loadProductColors(id);
+        colorSizeStocks = existingColors.flatMap((c) =>
+          (c.size_stocks || []).map((s) => ({
+            color_id: c.id,
+            size: s.size,
+            stock: Number(s.stock ?? 0),
+          }))
+        );
+      }
+
       await saveProductRelations(
         id,
         images,
         colorIds,
         colorImages,
-        colorStocks
+        colorStocks,
+        colorSizeStocks
       );
     } else if (dto.image_url !== undefined && dto.image_url?.trim()) {
       await saveProductRelations(

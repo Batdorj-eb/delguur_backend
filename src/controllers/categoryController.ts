@@ -21,11 +21,12 @@ export const listCategoriesWithCounts = async (
     const result = await pool.query<{
       id: string;
       name: string;
+      parent_id: string | null;
       parent_name: string | null;
       count: string;
       cover_image_url: string | null;
     }>(
-      `SELECT c.id, c.name, p.name AS parent_name,
+      `SELECT c.id, c.name, c.parent_id, p.name AS parent_name,
               COUNT(pr.id) FILTER (WHERE pr.is_active = TRUE)::bigint AS count,
               (
                 SELECT p2.image_url
@@ -37,18 +38,26 @@ export const listCategoriesWithCounts = async (
        FROM categories c
        LEFT JOIN categories p ON p.id = c.parent_id
        LEFT JOIN products pr ON pr.category = c.name
-       GROUP BY c.id, c.name, p.name
-       ORDER BY c.name`
+       GROUP BY c.id, c.name, c.parent_id, p.name
+       ORDER BY p.name NULLS FIRST, c.name`
     );
 
     res.json(
       <ApiResponse<
-        { id: string; name: string; parent_name: string | null; count: number; cover_image_url: string | null }[]
+        {
+          id: string;
+          name: string;
+          parent_id: string | null;
+          parent_name: string | null;
+          count: number;
+          cover_image_url: string | null;
+        }[]
       >>{
         success: true,
         data: result.rows.map((r) => ({
           id: r.id,
           name: r.name,
+          parent_id: r.parent_id,
           parent_name: r.parent_name,
           count: Number(r.count),
           cover_image_url: r.cover_image_url,

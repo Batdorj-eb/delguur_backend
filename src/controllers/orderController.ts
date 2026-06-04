@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import pool from '../config/database';
+import { effectivePrice } from '../utils/productPrice';
 import { CreateOrderDto, Order, ApiResponse, OrderStatus, PaymentStatus } from '../types';
 import { AppError } from '../middleware/errorHandler';
 import { getSessionId } from '../utils/getSessionId';
@@ -93,8 +94,14 @@ export const createOrder = async (
     }[] = [];
 
     for (const item of dto.items) {
-      const product = await client.query(
-        'SELECT id, name, price, is_active FROM products WHERE id = $1 FOR UPDATE',
+      const product = await client.query<{
+        id: string;
+        name: string;
+        price: number;
+        sale_price: number | null;
+        is_active: boolean;
+      }>(
+        'SELECT id, name, price, sale_price, is_active FROM products WHERE id = $1 FOR UPDATE',
         [item.product_id]
       );
 
@@ -124,7 +131,11 @@ export const createOrder = async (
         ? `${product.rows[0].name} (${colorName})`
         : (product.rows[0].name as string);
 
-      const itemSubtotal = Number(product.rows[0].price) * item.quantity;
+      const unitPrice = effectivePrice(
+        Number(product.rows[0].price),
+        product.rows[0].sale_price
+      );
+      const itemSubtotal = unitPrice * item.quantity;
       subtotal += itemSubtotal;
 
       resolvedItems.push({
@@ -132,7 +143,7 @@ export const createOrder = async (
         color_id: colorId,
         color_name: colorName,
         name: displayName,
-        price: Number(product.rows[0].price),
+        price: unitPrice,
         quantity: item.quantity,
         subtotal: itemSubtotal,
       });

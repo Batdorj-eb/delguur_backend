@@ -3,6 +3,7 @@ import pool from '../config/database';
 import { Product, CreateProductDto, UpdateProductDto, ApiResponse } from '../types';
 import { AppError } from '../middleware/errorHandler';
 import { assertCategoryExists } from './categoryController';
+import { normalizeSalePrice } from '../utils/productPrice';
 import {
   enrichProductRow,
   loadProductColors,
@@ -192,6 +193,12 @@ export const createProduct = async (
     const primaryUrl =
       images.find((i) => i.is_primary)?.image_url || images[0].image_url;
 
+    const salePrice = normalizeSalePrice(
+      dto.price,
+      dto.sale_price ?? null,
+      dto.sale_price != null
+    );
+
     const colorIds = dto.color_ids || [];
     const colorStocks = (dto.color_stocks || []) as ProductColorStockInput[];
     const colorSizeStocks = (dto.color_size_stocks || []) as ProductColorSizeStockInput[];
@@ -209,13 +216,14 @@ export const createProduct = async (
         : Math.max(0, Math.floor(Number(dto.stock) || 0));
 
     const result = await pool.query<Product>(
-      `INSERT INTO products (name, description, price, image_url, category, stock, is_featured)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO products (name, description, price, sale_price, image_url, category, stock, is_featured)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
       [
         dto.name.trim(),
         dto.description?.trim() || null,
         dto.price,
+        salePrice,
         primaryUrl,
         categoryName,
         totalStock,
@@ -269,16 +277,23 @@ export const updateProduct = async (
       await assertCategoryExists(nextCategory);
     }
 
+    const nextPrice = dto.price ?? p.price;
+    const nextSalePrice =
+      dto.sale_price !== undefined
+        ? normalizeSalePrice(nextPrice, dto.sale_price, dto.sale_price != null)
+        : p.sale_price;
+
     const result = await pool.query<Product>(
       `UPDATE products
-       SET name=$1, description=$2, price=$3,
-           category=$4, stock=$5, is_active=$6, is_featured=$7
-       WHERE id=$8
+       SET name=$1, description=$2, price=$3, sale_price=$4,
+           category=$5, stock=$6, is_active=$7, is_featured=$8
+       WHERE id=$9
        RETURNING *`,
       [
         dto.name?.trim() ?? p.name,
         dto.description?.trim() ?? p.description,
-        dto.price ?? p.price,
+        nextPrice,
+        nextSalePrice,
         nextCategory,
         dto.stock ?? p.stock,
         dto.is_active ?? p.is_active,

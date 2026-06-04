@@ -40,6 +40,10 @@ const createTables = async (): Promise<void> => {
       ALTER TABLE products ADD COLUMN IF NOT EXISTS is_featured BOOLEAN NOT NULL DEFAULT FALSE;
     `);
 
+    await client.query(`
+      ALTER TABLE products ADD COLUMN IF NOT EXISTS sale_price NUMERIC(10,2);
+    `);
+
     // ── 2a. COLORS (admin palette) ───────────────────────────────────────
     await client.query(`
       CREATE TABLE IF NOT EXISTS colors (

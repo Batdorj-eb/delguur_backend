@@ -63,6 +63,8 @@ export interface Product {
   name: string;
   description: string | null;
   price: number;
+  /** Хямдралын үнэ — null эсвэл price-аас бага үед идэвхтэй */
+  sale_price: number | null;
   image_url: string | null;
   category: string | null;
   stock: number;
@@ -79,6 +81,7 @@ export interface CreateProductDto {
   name: string;
   description?: string;
   price: number;
+  sale_price?: number | null;
   image_url?: string;
   images?: ProductImageInput[];
   category?: string;

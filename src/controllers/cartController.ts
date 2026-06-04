@@ -7,6 +7,7 @@ import {
   assertVariantStockAvailable,
   productHasColors,
 } from '../services/productStock';
+import { EFFECTIVE_PRICE_SQL } from '../utils/productPrice';
 
 const findOrCreateCart = async (sessionId: string): Promise<string> => {
   const existing = await pool.query(
@@ -26,12 +27,12 @@ const CART_ITEM_SELECT = `
   SELECT
     ci.id, ci.cart_id, ci.product_id, ci.color_id, ci.quantity,
     p.name  AS product_name,
-    p.price AS product_price,
+    (${EFFECTIVE_PRICE_SQL}) AS product_price,
     COALESCE(color_img.image_url, p.image_url) AS product_image,
     COALESCE(pc.stock, p.stock) AS product_stock,
     c.name AS color_name,
     c.hex_code AS color_hex,
-    (p.price * ci.quantity) AS subtotal
+    ((${EFFECTIVE_PRICE_SQL}) * ci.quantity) AS subtotal
   FROM cart_items ci
   JOIN products p ON p.id = ci.product_id
   LEFT JOIN colors c ON c.id = ci.color_id

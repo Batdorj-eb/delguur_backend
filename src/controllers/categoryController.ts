@@ -11,7 +11,56 @@ export const assertCategoryExists = async (categoryName: string): Promise<void> 
   }
 };
 
-// ── GET /categories (public — бүх түвшин, шууд барааны тоо) ───────────
+type CategoryCountRow = {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  parent_name: string | null;
+  count: number;
+  cover_image_url: string | null;
+};
+
+/** Доошх ангиллуудын барааны тоог дээд түвшинд нэгтгэнэ */
+function enrichCategorySubtreeCounts(rows: CategoryCountRow[]): CategoryCountRow[] {
+  const directCounts = new Map(rows.map((r) => [r.id, r.count]));
+  const childrenByParent = new Map<string | null, CategoryCountRow[]>();
+
+  for (const row of rows) {
+    const list = childrenByParent.get(row.parent_id) ?? [];
+    list.push(row);
+    childrenByParent.set(row.parent_id, list);
+  }
+
+  const subtreeCount = (id: string): number => {
+    let total = directCounts.get(id) ?? 0;
+    for (const child of childrenByParent.get(id) ?? []) {
+      total += subtreeCount(child.id);
+    }
+    return total;
+  };
+
+  return rows.map((r) => ({ ...r, count: subtreeCount(r.id) }));
+}
+
+/** Ангилал болон түүний бүх доошх ангиллын нэрүүд */
+export const getCategoryNamesInBranch = async (categoryName: string): Promise<string[]> => {
+  const result = await pool.query<{ name: string }>(
+    `WITH RECURSIVE subtree AS (
+       SELECT id, name FROM categories WHERE name = $1
+       UNION ALL
+       SELECT c.id, c.name FROM categories c
+       INNER JOIN subtree s ON c.parent_id = s.id
+     )
+     SELECT name FROM subtree`,
+    [categoryName]
+  );
+  if (result.rows.length === 0) {
+    return [categoryName];
+  }
+  return result.rows.map((r) => r.name);
+};
+
+// ── GET /categories (public — бүх түвшин, доошх модны нийт барааны тоо) ──
 export const listCategoriesWithCounts = async (
   _req: Request,
   res: Response,
@@ -42,6 +91,15 @@ export const listCategoriesWithCounts = async (
        ORDER BY p.name NULLS FIRST, c.name`
     );
 
+    const rows: CategoryCountRow[] = result.rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      parent_id: r.parent_id,
+      parent_name: r.parent_name,
+      count: Number(r.count),
+      cover_image_url: r.cover_image_url,
+    }));
+
     res.json(
       <ApiResponse<
         {
@@ -54,14 +112,7 @@ export const listCategoriesWithCounts = async (
         }[]
       >>{
         success: true,
-        data: result.rows.map((r) => ({
-          id: r.id,
-          name: r.name,
-          parent_id: r.parent_id,
-          parent_name: r.parent_name,
-          count: Number(r.count),
-          cover_image_url: r.cover_image_url,
-        })),
+        data: enrichCategorySubtreeCounts(rows),
       }
     );
   } catch (err) {

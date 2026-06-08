@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import pool from '../config/database';
 import { Product, CreateProductDto, UpdateProductDto, ApiResponse } from '../types';
 import { AppError } from '../middleware/errorHandler';
-import { assertCategoryExists } from './categoryController';
+import { assertCategoryExists, getCategoryNamesInBranch } from './categoryController';
 import { normalizeSalePrice } from '../utils/productPrice';
 import {
   enrichProductRow,
@@ -53,8 +53,9 @@ export const getProducts = async (
       conditions.push(`p.is_active = TRUE`);
     }
     if (category) {
-      conditions.push(`p.category = $${paramIndex++}`);
-      params.push(category);
+      const branchNames = await getCategoryNamesInBranch(category);
+      conditions.push(`p.category = ANY($${paramIndex++})`);
+      params.push(branchNames);
     }
     if (search) {
       conditions.push(`(p.name ILIKE $${paramIndex} OR p.description ILIKE $${paramIndex})`);

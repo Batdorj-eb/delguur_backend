@@ -206,7 +206,7 @@ export interface CreateOrderDto {
     quantity: number;
     color_id?: string;
   }[];
-  /** Дансаар төлөх үед заавал — checkout-оос авсан 6 тэмдэгт */
+  /** Дансаар төлөх үед гүйлгээний утга (одоогоор утасны дугаар) */
   reference_code?: string;
 }
 

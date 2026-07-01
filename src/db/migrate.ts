@@ -242,6 +242,12 @@ const createTables = async (): Promise<void> => {
       ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_ref_code VARCHAR(6);
     `);
 
+    // Түр: гүйлгээний утгад утасны дугаар хадгалах (6 тэмдэгтээс урт)
+    await client.query(`
+      ALTER TABLE orders ALTER COLUMN payment_ref_code TYPE VARCHAR(32);
+    `);
+    await client.query(`DROP INDEX IF EXISTS idx_orders_payment_ref_code_unique;`);
+
     // ── Өнгө бүрт нөөц + сагс/захиалгад өнгө ─────────────────────────────
     await client.query(`
       ALTER TABLE product_colors ADD COLUMN IF NOT EXISTS stock INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0);
@@ -281,7 +287,7 @@ const createTables = async (): Promise<void> => {
     await client.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_payment_ref_code_unique
       ON orders (payment_ref_code)
-      WHERE payment_ref_code IS NOT NULL;
+      WHERE payment_ref_code IS NOT NULL AND length(payment_ref_code) = 6;
     `);
 
     // ── 8d. Сайтын тохиргоо (нүүр hero зураг г.м) ───────────────────────────

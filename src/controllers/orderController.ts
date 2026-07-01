@@ -3,16 +3,13 @@ import pool from '../config/database';
 import { effectivePrice } from '../utils/productPrice';
 import { CreateOrderDto, Order, ApiResponse, OrderStatus, PaymentStatus } from '../types';
 import { AppError } from '../middleware/errorHandler';
-import { getSessionId } from '../utils/getSessionId';
 import {
   assertVariantStockAvailable,
   deductVariantStock,
   productHasColors,
   restoreVariantStock,
 } from '../services/productStock';
-
-/** I, O, 0, 1-гүй — checkoutReferenceController-тай ижил */
-const PAYMENT_REF_CODE_RE = /^[A-HJ-NP-Z2-9]{6}$/;
+import { getDeliveryShippingFeeMnt } from '../utils/deliveryFee';
 
 // Захиалгын дугаар үүсгэх: ORD-20240101-XXXX
 const generateOrderNumber = (): string => {
@@ -36,9 +33,6 @@ export const BANK_TRANSFER_DISPLAY = {
 } as const;
 
 const PICKUP_LOCATION_LABEL = 'Sunday plaza B1 давхар 110 тоот';
-
-/** Хүргэлтийн төлбөр (төгрөг) */
-const DELIVERY_SHIPPING_FEE_MNT = 10_000;
 
 // ── POST /orders ──────────────────────────────────────────────────────
 export const createOrder = async (
@@ -65,19 +59,9 @@ export const createOrder = async (
 
     const payMethod = dto.payment_method || 'bank_transfer';
     const isBank = payMethod === 'bank_transfer';
-    const sessionId = isBank ? getSessionId(req) : '';
 
-    const refNormalized = (dto.reference_code || '').trim().toUpperCase();
-    if (isBank) {
-      if (!PAYMENT_REF_CODE_RE.test(refNormalized)) {
-        throw new AppError(
-          400,
-          'Төлбөрийн 6 тэмдэгтийн код шаардлагатай. Сагсны хуудсаас автоматаар үүссэн кодыг ашиглана уу.'
-        );
-      }
-      if (!dto.customer_phone?.trim()) {
-        throw new AppError(400, 'Дансаар төлөх үед утасны дугаар шаардлагатай.');
-      }
+    if (isBank && !dto.customer_phone?.trim()) {
+      throw new AppError(400, 'Дансаар төлөх үед утасны дугаар шаардлагатай.');
     }
 
     await client.query('BEGIN');
@@ -151,7 +135,7 @@ export const createOrder = async (
       await deductVariantStock(item.product_id, colorId, item.quantity, client);
     }
 
-    const shippingFee = isPickup ? 0 : DELIVERY_SHIPPING_FEE_MNT;
+    const shippingFee = isPickup ? 0 : getDeliveryShippingFeeMnt(subtotal);
     const total = subtotal + shippingFee;
     const orderNumber = generateOrderNumber();
 
@@ -160,18 +144,9 @@ export const createOrder = async (
       : dto.shipping_address!.trim();
 
     let paymentRefForOrder: string | null = null;
+    const phoneForTransfer = dto.customer_phone?.trim() || '';
     if (isBank) {
-      const claimed = await client.query<{ code: string }>(
-        `DELETE FROM checkout_reference_codes WHERE session_id = $1 AND code = $2 RETURNING code`,
-        [sessionId, refNormalized]
-      );
-      if (!claimed.rows[0]) {
-        throw new AppError(
-          400,
-          'Төлбөрийн код буруу эсвэл хугацаа дууссан. Хуудсыг шинэчлээд дахин код авна уу.'
-        );
-      }
-      paymentRefForOrder = refNormalized;
+      paymentRefForOrder = phoneForTransfer;
     }
 
     // Захиалга үүсгэх
@@ -200,7 +175,6 @@ export const createOrder = async (
     );
 
     const order = orderResult.rows[0];
-    const phoneForTransfer = dto.customer_phone?.trim() || '';
 
     // Order items нэмэх
     for (const item of resolvedItems) {
@@ -233,7 +207,7 @@ export const createOrder = async (
               bank: BANK_TRANSFER_DISPLAY.bank,
               account: BANK_TRANSFER_DISPLAY.account,
               account_name: BANK_TRANSFER_DISPLAY.account_holder,
-              reference: `${phoneForTransfer} ${paymentRefForOrder}`.trim(),
+              reference: phoneForTransfer,
               payment_ref_code: paymentRefForOrder,
               order_number: orderNumber,
             }

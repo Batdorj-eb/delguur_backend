@@ -9,7 +9,11 @@ import {
   productHasColors,
   restoreVariantStock,
 } from '../services/productStock';
-import { getDeliveryShippingFeeMnt } from '../utils/deliveryFee';
+import {
+  DELIVERY_MIN_ORDER_MNT,
+  getDeliveryShippingFeeMnt,
+  isDeliveryAvailable,
+} from '../utils/deliveryFee';
 
 // Захиалгын дугаар үүсгэх: ORD-20240101-XXXX
 const generateOrderNumber = (): string => {
@@ -133,6 +137,13 @@ export const createOrder = async (
       });
 
       await deductVariantStock(item.product_id, colorId, item.quantity, client);
+    }
+
+    if (!isPickup && !isDeliveryAvailable(subtotal)) {
+      throw new AppError(
+        400,
+        `Хүргүүлэхийн доод захиалгын дүн ${DELIVERY_MIN_ORDER_MNT.toLocaleString('en-US')}₮. Очиж авахыг сонгоно уу.`
+      );
     }
 
     const shippingFee = isPickup ? 0 : getDeliveryShippingFeeMnt(subtotal);

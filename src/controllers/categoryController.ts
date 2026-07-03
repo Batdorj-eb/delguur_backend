@@ -80,7 +80,18 @@ export const listCategoriesWithCounts = async (
               (
                 SELECT p2.image_url
                 FROM products p2
-                WHERE p2.category = c.name AND p2.is_active = TRUE
+                WHERE p2.is_active = TRUE
+                  AND p2.image_url IS NOT NULL
+                  AND TRIM(p2.image_url) <> ''
+                  AND p2.category IN (
+                    WITH RECURSIVE subtree AS (
+                      SELECT id, name FROM categories WHERE id = c.id
+                      UNION ALL
+                      SELECT ch.id, ch.name FROM categories ch
+                      INNER JOIN subtree s ON ch.parent_id = s.id
+                    )
+                    SELECT name FROM subtree
+                  )
                 ORDER BY p2.created_at DESC NULLS LAST, p2.id DESC
                 LIMIT 1
               ) AS cover_image_url
